@@ -8,6 +8,16 @@ import argparse
 import asyncio
 import json
 
+from constants import (
+    CLI_CRITICS_COUNT_RANGE,
+    DEBUG_LOG_LEVEL,
+    DEFAULT_LOG_LEVEL,
+    DEFAULT_ROTATING_CRITICS_COUNT,
+    JSON_INDENT,
+    MAX_ROTATING_CRITICS,
+    MIN_ROTATING_CRITICS,
+    SEPARATOR_LINE_LENGTH,
+)
 from logging_config import get_logger, setup_logging
 from main import ConsensusAnalyzer, CriticEnsemble, SceneData, print_review_summary
 
@@ -22,7 +32,7 @@ class TheaterCriticsInterface:
     def create_scene_interactive(self) -> SceneData:
         """Interactive scene creation."""
         print("\n🎭 CREATE NEW SCENE FOR ANALYSIS")
-        print("=" * 50)
+        print("=" * SEPARATOR_LINE_LENGTH)
 
         title = input("Scene Title: ").strip()
         musical = input("Musical Name: ").strip()
@@ -51,9 +61,9 @@ class TheaterCriticsInterface:
     def save_scene_to_file(self, scene: SceneData, filepath: str):
         """Save scene to JSON file."""
         with open(filepath, 'w') as f:
-            json.dump(scene.__dict__, f, indent=2)
+            json.dump(scene.__dict__, f, indent=JSON_INDENT)
 
-    async def analyze_scene_async(self, scene: SceneData, num_critics: int = 3):
+    async def analyze_scene_async(self, scene: SceneData, num_critics: int = DEFAULT_ROTATING_CRITICS_COUNT):
         """Analyze scene with critic ensemble."""
         reviews = await self.ensemble.review_scene(scene, num_critics)
         consensus = ConsensusAnalyzer.calculate_consensus(reviews)
@@ -62,7 +72,7 @@ class TheaterCriticsInterface:
     def list_critics(self):
         """List all available critics and their specialties."""
         print("\n🎭 AVAILABLE CRITICS")
-        print("=" * 50)
+        print("=" * SEPARATOR_LINE_LENGTH)
         for critic_type, critic in self.ensemble.critics.items():
             print(f"🎬 {critic.name}")
             print(f"   Type: {critic_type.value.title()}")
@@ -103,14 +113,14 @@ def create_sample_scenes():
     for sample in samples:
         filename = f"sample_{sample['title'].lower().replace(' ', '_')}.json"
         with open(filename, 'w') as f:
-            json.dump(sample, f, indent=2)
+            json.dump(sample, f, indent=JSON_INDENT)
         print(f"Created {filename}")
 
 
 async def main():
     """Main CLI function."""
     # Setup logging
-    setup_logging(level="INFO", log_file="theater_critics_cli.log")
+    setup_logging(level=DEFAULT_LOG_LEVEL, log_file="theater_critics_cli.log")
     logger = get_logger()
     
     parser = argparse.ArgumentParser(description="Theater Critics Analysis System")
@@ -123,8 +133,8 @@ async def main():
         help="Load scene from JSON file"
     )
     parser.add_argument(
-        "--critics", "-c", type=int, default=3,
-        help="Number of rotating critics (1-5)"
+        "--critics", "-c", type=int, default=DEFAULT_ROTATING_CRITICS_COUNT,
+        help=f"Number of rotating critics ({MIN_ROTATING_CRITICS}-{MAX_ROTATING_CRITICS})"
     )
     parser.add_argument(
         "--save", "-s", type=str,
@@ -146,7 +156,7 @@ async def main():
     args = parser.parse_args()
     
     if args.debug:
-        setup_logging(level="DEBUG", log_file="theater_critics_cli_debug.log")
+        setup_logging(level=DEBUG_LOG_LEVEL, log_file="theater_critics_cli_debug.log")
         logger = get_logger()
         logger.debug("Debug logging enabled")
 

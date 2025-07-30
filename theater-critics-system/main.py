@@ -14,6 +14,32 @@ from typing import Dict, List, Optional
 import httpx
 
 from cache_system import cache_analysis_result
+from constants import (
+    CONSENSUS_MODERATE_THRESHOLD,
+    CONSENSUS_SOME_THRESHOLD,
+    CONSENSUS_STRONG_THRESHOLD,
+    DEFAULT_LOG_LEVEL,
+    DEFAULT_ROTATING_CRITICS_COUNT,
+    EXAMPLE_AUDIENCE_ENGAGEMENT,
+    EXAMPLE_MUSICAL_COMPOSITION,
+    EXAMPLE_NARRATIVE_INTEGRATION,
+    EXAMPLE_OVERALL_SCORE,
+    EXAMPLE_PERFORMANCE_QUALITY,
+    EXAMPLE_PRODUCTION_ELEMENTS,
+    EXAMPLE_SPECIALTY_SCORE,
+    HTTP_TIMEOUT_SECONDS,
+    JSON_INDENT,
+    OLLAMA_GENERATE_ENDPOINT,
+    SCORE_DEFAULT_FALLBACK,
+    SCORE_DEFAULT_SPECIALTY,
+    SCORE_ERROR_FALLBACK,
+    SCORE_MAX,
+    SCORE_MIN,
+    SECTION_LINE_LENGTH,
+    SEPARATOR_LINE_LENGTH,
+    SUBSECTION_LINE_LENGTH,
+    TEXT_TRUNCATION_LENGTH,
+)
 from logging_config import get_logger, log_performance, setup_logging
 
 
@@ -44,7 +70,7 @@ class SceneData:
 class ReviewScore:
     """Scoring structure for different aspects of theatrical analysis."""
 
-    overall: float  # 1-10
+    overall: float  # SCORE_MIN-SCORE_MAX
     musical_composition: float
     performance_quality: float
     production_elements: float
@@ -83,7 +109,7 @@ class TheaterCritic:
         self.critic_type = critic_type
         self.model = model
         self.specialty = specialty
-        self.ollama_url = "http://localhost:11434/api/generate"
+        self.ollama_url = OLLAMA_GENERATE_ENDPOINT
 
     @log_performance
     async def analyze_scene(self, scene: SceneData) -> CriticReview:
@@ -123,25 +149,25 @@ Analyze this musical theater scene:
 
         specialty_prompt = self._get_specialty_prompt()
 
-        scoring_prompt = """
+        scoring_prompt = f"""
 Provide your analysis in this JSON format:
-{
+{{
     "review_text": "Your comprehensive review (2-3 paragraphs)",
-    "scores": {
-        "overall": 7.5,
-        "musical_composition": 8.0,
-        "performance_quality": 7.0,
-        "production_elements": 8.5,
-        "narrative_integration": 6.5,
-        "audience_engagement": 7.8,
-        "specialty_score": 8.2
-    },
+    "scores": {{
+        "overall": {EXAMPLE_OVERALL_SCORE},
+        "musical_composition": {EXAMPLE_MUSICAL_COMPOSITION},
+        "performance_quality": {EXAMPLE_PERFORMANCE_QUALITY},
+        "production_elements": {EXAMPLE_PRODUCTION_ELEMENTS},
+        "narrative_integration": {EXAMPLE_NARRATIVE_INTEGRATION},
+        "audience_engagement": {EXAMPLE_AUDIENCE_ENGAGEMENT},
+        "specialty_score": {EXAMPLE_SPECIALTY_SCORE}
+    }},
     "key_strengths": ["strength 1", "strength 2", "strength 3"],
     "areas_for_improvement": ["improvement 1", "improvement 2"],
     "specialty_analysis": "Your focused analysis on your specialty area"
-}
+}}
 
-All scores should be between 1.0 and 10.0. Be critical but fair.
+All scores should be between {SCORE_MIN} and {SCORE_MAX}. Be critical but fair.
 """
 
         return base_prompt + specialty_prompt + scoring_prompt
@@ -182,7 +208,7 @@ Evaluate how well the scene conveys emotion and advances character arcs.
         logger.debug(f"Querying Ollama model: {self.model}")
         
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
                 response = await client.post(
                     self.ollama_url,
                     json={"model": self.model, "prompt": prompt, "stream": False},
@@ -249,17 +275,17 @@ Evaluate how well the scene conveys emotion and advances character arcs.
     def _create_fallback_review(self, response: str) -> CriticReview:
         """Create fallback review from non-JSON response."""
         # Extract basic analysis from text response
-        review_text = response[:500] + "..." if len(response) > 500 else response
+        review_text = response[:TEXT_TRUNCATION_LENGTH] + "..." if len(response) > TEXT_TRUNCATION_LENGTH else response
 
         # Assign moderate scores as fallback
         scores = ReviewScore(
-            overall=7.0,
-            musical_composition=7.0,
-            performance_quality=7.0,
-            production_elements=7.0,
-            narrative_integration=7.0,
-            audience_engagement=7.0,
-            specialty_score=7.5,
+            overall=SCORE_DEFAULT_FALLBACK,
+            musical_composition=SCORE_DEFAULT_FALLBACK,
+            performance_quality=SCORE_DEFAULT_FALLBACK,
+            production_elements=SCORE_DEFAULT_FALLBACK,
+            narrative_integration=SCORE_DEFAULT_FALLBACK,
+            audience_engagement=SCORE_DEFAULT_FALLBACK,
+            specialty_score=SCORE_DEFAULT_SPECIALTY,
         )
 
         return CriticReview(
@@ -280,7 +306,15 @@ Evaluate how well the scene conveys emotion and advances character arcs.
             critic_type=self.critic_type,
             model_used=self.model,
             review_text=f"Analysis failed: {error_msg}",
-            scores=ReviewScore(5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0),
+            scores=ReviewScore(
+                SCORE_ERROR_FALLBACK, 
+                SCORE_ERROR_FALLBACK, 
+                SCORE_ERROR_FALLBACK, 
+                SCORE_ERROR_FALLBACK, 
+                SCORE_ERROR_FALLBACK, 
+                SCORE_ERROR_FALLBACK, 
+                SCORE_ERROR_FALLBACK
+            ),
             key_strengths=["Unable to analyze"],
             areas_for_improvement=["System error occurred"],
             specialty_analysis="Analysis unavailable due to error",
@@ -336,7 +370,7 @@ class CriticEnsemble:
             ),
         }
 
-    def select_rotating_critics(self, count: int = 3) -> List[TheaterCritic]:
+    def select_rotating_critics(self, count: int = DEFAULT_ROTATING_CRITICS_COUNT) -> List[TheaterCritic]:
         """Select random subset of secondary critics for this review."""
         secondary_critics = [
             critic
@@ -347,7 +381,7 @@ class CriticEnsemble:
 
     @log_performance
     async def review_scene(
-        self, scene: SceneData, num_rotating_critics: int = 3
+        self, scene: SceneData, num_rotating_critics: int = DEFAULT_ROTATING_CRITICS_COUNT
     ) -> List[CriticReview]:
         """Get reviews from primary critic and rotating ensemble."""
         logger = get_logger()
@@ -405,11 +439,11 @@ class ConsensusAnalyzer:
 
         # Identify consensus level
         overall_variation = score_variations["overall"]
-        if overall_variation <= 1.0:
+        if overall_variation <= CONSENSUS_STRONG_THRESHOLD:
             consensus_level = "Strong Agreement"
-        elif overall_variation <= 2.0:
+        elif overall_variation <= CONSENSUS_MODERATE_THRESHOLD:
             consensus_level = "Moderate Agreement"
-        elif overall_variation <= 3.0:
+        elif overall_variation <= CONSENSUS_SOME_THRESHOLD:
             consensus_level = "Some Disagreement"
         else:
             consensus_level = "Significant Disagreement"
@@ -433,45 +467,45 @@ class ConsensusAnalyzer:
 
 def print_review_summary(reviews: List[CriticReview], consensus: Dict):
     """Print formatted review summary."""
-    print("\n" + "=" * 80)
+    print("\n" + "=" * SEPARATOR_LINE_LENGTH)
     print("🎭 THEATER CRITICS ENSEMBLE REVIEW")
-    print("=" * 80)
+    print("=" * SEPARATOR_LINE_LENGTH)
 
     # Consensus overview
     print(f"\n📊 CONSENSUS: {consensus['consensus_level']}")
-    print(f"Overall Score: {consensus['average_scores']['overall']:.1f}/10.0")
+    print(f"Overall Score: {consensus['average_scores']['overall']:.1f}/{SCORE_MAX}")
     print(f"Critics Participating: {consensus['critic_count']}")
 
     # Individual reviews
-    print("\n" + "-" * 60)
+    print("\n" + "-" * SECTION_LINE_LENGTH)
     print("INDIVIDUAL CRITIC REVIEWS")
-    print("-" * 60)
+    print("-" * SECTION_LINE_LENGTH)
 
     for review in reviews:
         print(f"\n🎬 {review.critic_name} ({review.critic_type.value.title()})")
         print(f"Model: {review.model_used}")
-        print(f"Overall Score: {review.scores.overall}/10.0")
-        print(f"Specialty Score: {review.scores.specialty_score}/10.0")
+        print(f"Overall Score: {review.scores.overall}/{SCORE_MAX}")
+        print(f"Specialty Score: {review.scores.specialty_score}/{SCORE_MAX}")
         print(f"\nReview: {review.review_text}")
         print(f"\nStrengths: {', '.join(review.key_strengths)}")
         print(f"Improvements: {', '.join(review.areas_for_improvement)}")
         print(f"\nSpecialty Analysis: {review.specialty_analysis}")
-        print("-" * 40)
+        print("-" * SUBSECTION_LINE_LENGTH)
 
     # Detailed scores
     print("\n📈 DETAILED CONSENSUS SCORES")
-    print("-" * 40)
+    print("-" * SUBSECTION_LINE_LENGTH)
     for category, score in consensus["average_scores"].items():
         variation = consensus["score_variations"][category]
         print(
-            f"{category.replace('_', ' ').title()}: {score:.1f}/10.0 (±{variation:.1f})"
+            f"{category.replace('_', ' ').title()}: {score:.1f}/{SCORE_MAX} (±{variation:.1f})"
         )
 
 
 async def main():
     """Example usage of the theater critics system."""
     # Setup logging
-    setup_logging(level="INFO", log_file="theater_critics.log")
+    setup_logging(level=DEFAULT_LOG_LEVEL, log_file="theater_critics.log")
     logger = get_logger()
     logger.info("Starting Theater Critics System")
     

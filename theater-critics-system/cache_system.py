@@ -7,18 +7,24 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from constants import (
+    CACHE_FILE_EXTENSION,
+    CACHE_HASH_DIGEST_SIZE,
+    CACHE_MINIMUM_VALID_SCORE,
+    DEFAULT_CACHE_TTL_SECONDS,
+)
 from logging_config import get_logger
 
 
 class SimpleCache:
     """Simple file-based cache for analysis results."""
 
-    def __init__(self, cache_dir: str = ".cache", ttl_seconds: int = 3600):
+    def __init__(self, cache_dir: str = ".cache", ttl_seconds: int = DEFAULT_CACHE_TTL_SECONDS):
         """Initialize cache with directory and TTL.
 
         Args:
             cache_dir: Directory to store cache files
-            ttl_seconds: Time to live for cache entries (default: 1 hour)
+            ttl_seconds: Time to live for cache entries (default: 1 hour from constants)
         """
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(exist_ok=True)
@@ -33,11 +39,11 @@ class SimpleCache:
             "critic": critic_name,
         }
         content = json.dumps(cache_data, sort_keys=True)
-        return hashlib.blake2b(content.encode(), digest_size=16).hexdigest()
+        return hashlib.blake2b(content.encode(), digest_size=CACHE_HASH_DIGEST_SIZE).hexdigest()
 
     def _get_cache_path(self, cache_key: str) -> Path:
         """Get file path for cache key."""
-        return self.cache_dir / f"{cache_key}.cache"
+        return self.cache_dir / f"{cache_key}{CACHE_FILE_EXTENSION}"
 
     def get(self, scene_data: Dict, critic_name: str) -> Optional[Any]:
         """Get cached result if available and not expired.
@@ -103,7 +109,7 @@ class SimpleCache:
 
     def clear(self) -> None:
         """Clear all cache entries."""
-        for cache_file in self.cache_dir.glob("*.cache"):
+        for cache_file in self.cache_dir.glob(f"*{CACHE_FILE_EXTENSION}"):
             try:
                 cache_file.unlink()
             except Exception as e:
@@ -117,7 +123,7 @@ class SimpleCache:
             Number of entries removed
         """
         removed_count = 0
-        for cache_file in self.cache_dir.glob("*.cache"):
+        for cache_file in self.cache_dir.glob(f"*{CACHE_FILE_EXTENSION}"):
             try:
                 with open(cache_file, 'rb') as f:
                     cache_entry = pickle.load(f)
@@ -142,7 +148,7 @@ class SimpleCache:
         Returns:
             Dictionary with cache statistics
         """
-        cache_files = list(self.cache_dir.glob("*.cache"))
+        cache_files = list(self.cache_dir.glob(f"*{CACHE_FILE_EXTENSION}"))
         total_size = sum(f.stat().st_size for f in cache_files)
 
         expired_count = 0
@@ -203,10 +209,9 @@ def cache_analysis_result(func):
         result = await func(self, scene, *args, **kwargs)
 
         # Cache the result (only if successful)
-        MINIMUM_VALID_SCORE = 10  # Define a meaningful threshold for valid scores
         if (
             hasattr(result, 'scores') and 
-            result.scores.overall >= MINIMUM_VALID_SCORE and 
+            result.scores.overall >= CACHE_MINIMUM_VALID_SCORE and 
             not getattr(result, 'is_error', False)  # Ensure result is not an error
         ):
             cache.set(scene_dict, self.name, result)
