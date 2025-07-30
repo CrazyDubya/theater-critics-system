@@ -203,7 +203,12 @@ def cache_analysis_result(func):
         result = await func(self, scene, *args, **kwargs)
 
         # Cache the result (only if successful)
-        if hasattr(result, 'scores') and result.scores.overall > 0:
+        MINIMUM_VALID_SCORE = 10  # Define a meaningful threshold for valid scores
+        if (
+            hasattr(result, 'scores') and 
+            result.scores.overall >= MINIMUM_VALID_SCORE and 
+            not getattr(result, 'is_error', False)  # Ensure result is not an error
+        ):
             cache.set(scene_dict, self.name, result)
 
         return result
