@@ -85,7 +85,6 @@ class TheaterCritic:
         self.specialty = specialty
         self.ollama_url = "http://localhost:11434/api/generate"
 
-    @cache_analysis_result
     @log_performance
     async def analyze_scene(self, scene: SceneData) -> CriticReview:
         """Analyze a musical theater scene from this critic's perspective."""
