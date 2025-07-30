@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
-"""
-Theater Critics Multi-Agent System
-Uses Ollama models to provide rotating ensemble of theater critics for musical scene reviews
-"""
+"""Theater Critics Multi-Agent System.
 
-import json
-import random
-from dataclasses import asdict, dataclass
-from enum import Enum
-from typing import Dict, List, Optional, Tuple
+Uses Ollama models to provide rotating ensemble of theater critics for musical scene reviews.
+"""
 
 import asyncio
+import json
+import random
+from dataclasses import dataclass
+from enum import Enum
+from typing import Dict, List, Optional
+
 import httpx
+
+from cache_system import cache_analysis_result
+from logging_config import get_logger, log_performance, setup_logging
 
 
 class CriticType(Enum):
+    """Enumeration of different critic specializations."""
+
     PRIMARY = "primary"
     ACADEMIC = "academic"
     POPULAR = "popular"
@@ -25,6 +30,8 @@ class CriticType(Enum):
 
 @dataclass
 class SceneData:
+    """Data structure for musical theater scene information."""
+
     title: str
     musical: str
     description: str
@@ -35,6 +42,8 @@ class SceneData:
 
 @dataclass
 class ReviewScore:
+    """Scoring structure for different aspects of theatrical analysis."""
+
     overall: float  # 1-10
     musical_composition: float
     performance_quality: float
@@ -46,6 +55,8 @@ class ReviewScore:
 
 @dataclass
 class CriticReview:
+    """Complete review from a single critic including scores and analysis."""
+
     critic_name: str
     critic_type: CriticType
     model_used: str
@@ -57,27 +68,43 @@ class CriticReview:
 
 
 class TheaterCritic:
-    """Base class for theater critics using different Ollama models"""
+    """Base class for theater critics using different Ollama models."""
 
     def __init__(self, name: str, critic_type: CriticType, model: str, specialty: str):
+        """Initialize a theater critic with specific model and expertise.
+
+        Args:
+            name: Human-readable name of the critic
+            critic_type: Type of critical specialization
+            model: Ollama model identifier to use
+            specialty: Area of expertise description
+        """
         self.name = name
         self.critic_type = critic_type
         self.model = model
         self.specialty = specialty
         self.ollama_url = "http://localhost:11434/api/generate"
 
+    @cache_analysis_result
+    @log_performance
     async def analyze_scene(self, scene: SceneData) -> CriticReview:
-        """Analyze a musical theater scene from this critic's perspective"""
+        """Analyze a musical theater scene from this critic's perspective."""
+        logger = get_logger()
+        logger.info(f"Starting analysis for scene: {scene.title} from {scene.musical}")
+        
         prompt = self._build_analysis_prompt(scene)
 
         try:
             response = await self._query_ollama(prompt)
-            return self._parse_response(response, scene)
+            result = self._parse_response(response, scene)
+            logger.info(f"Successfully analyzed scene: {scene.title} with score {result.scores.overall}")
+            return result
         except Exception as e:
+            logger.error(f"Analysis failed for scene {scene.title}: {str(e)}")
             return self._create_error_review(str(e))
 
     def _build_analysis_prompt(self, scene: SceneData) -> str:
-        """Build specialized prompt for this critic type"""
+        """Build specialized prompt for this critic type."""
         base_prompt = f"""
 You are {self.name}, a renowned theater critic specializing in {self.specialty}.
 
@@ -121,10 +148,10 @@ All scores should be between 1.0 and 10.0. Be critical but fair.
         return base_prompt + specialty_prompt + scoring_prompt
 
     def _get_specialty_prompt(self) -> str:
-        """Get specialized analysis prompt based on critic type"""
+        """Get specialized analysis prompt based on critic type."""
         prompts = {
             CriticType.PRIMARY: """
-As the lead critic, provide a comprehensive analysis covering all aspects of the scene. 
+As the lead critic, provide a comprehensive analysis covering all aspects of the scene.
 Focus on overall artistic merit, technical execution, and cultural significance.
 """,
             CriticType.ACADEMIC: """
@@ -151,7 +178,10 @@ Evaluate how well the scene conveys emotion and advances character arcs.
         return prompts.get(self.critic_type, prompts[CriticType.PRIMARY])
 
     async def _query_ollama(self, prompt: str) -> str:
-        """Send prompt to Ollama and get response"""
+        """Send prompt to Ollama and get response."""
+        logger = get_logger()
+        logger.debug(f"Querying Ollama model: {self.model}")
+        
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(
@@ -160,17 +190,22 @@ Evaluate how well the scene conveys emotion and advances character arcs.
                 )
                 response.raise_for_status()
                 result = response.json()["response"]
-                print(f"✅ {self.name} analysis complete")
+                logger.debug(f"Received response from {self.model}: {len(result)} characters")
                 return result
         except httpx.TimeoutException:
+            logger.error(f"Timeout waiting for {self.model}")
             raise Exception(f"Timeout waiting for {self.model}")
         except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error {e.response.status_code} from {self.model}: {e.response.text}")
             raise Exception(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
+            logger.error(f"Failed to query {self.model}: {str(e)}")
             raise Exception(f"Failed to query {self.model}: {str(e)}")
 
     def _parse_response(self, response: str, scene: SceneData) -> CriticReview:
-        """Parse Ollama response into CriticReview object"""
+        """Parse Ollama response into CriticReview object."""
+        logger = get_logger()
+        
         try:
             # Try to extract JSON from response if it contains other text
             response = response.strip()
@@ -182,8 +217,10 @@ Evaluate how well the scene conveys emotion and advances character arcs.
             if start_idx != -1 and end_idx > start_idx:
                 json_str = response[start_idx:end_idx]
                 data = json.loads(json_str)
+                logger.debug(f"Successfully parsed JSON response from {self.name}")
             else:
                 # If no JSON found, create fallback review
+                logger.warning(f"No JSON found in response from {self.name}, using fallback")
                 return self._create_fallback_review(response)
 
             scores = ReviewScore(
@@ -207,10 +244,11 @@ Evaluate how well the scene conveys emotion and advances character arcs.
                 specialty_analysis=data["specialty_analysis"],
             )
         except (json.JSONDecodeError, KeyError) as e:
+            logger.warning(f"Failed to parse JSON response from {self.name}: {str(e)}")
             return self._create_fallback_review(response)
 
     def _create_fallback_review(self, response: str) -> CriticReview:
-        """Create fallback review from non-JSON response"""
+        """Create fallback review from non-JSON response."""
         # Extract basic analysis from text response
         review_text = response[:500] + "..." if len(response) > 500 else response
 
@@ -237,7 +275,7 @@ Evaluate how well the scene conveys emotion and advances character arcs.
         )
 
     def _create_error_review(self, error_msg: str) -> CriticReview:
-        """Create error review when analysis fails"""
+        """Create error review when analysis fails."""
         return CriticReview(
             critic_name=self.name,
             critic_type=self.critic_type,
@@ -251,14 +289,15 @@ Evaluate how well the scene conveys emotion and advances character arcs.
 
 
 class CriticEnsemble:
-    """Manages the rotating ensemble of theater critics"""
+    """Manages the rotating ensemble of theater critics."""
 
     def __init__(self):
+        """Initialize the critic ensemble with all available critics."""
         self.critics = self._initialize_critics()
         self.primary_critic = self.critics[CriticType.PRIMARY]
 
     def _initialize_critics(self) -> Dict[CriticType, TheaterCritic]:
-        """Initialize all critic agents with their specialized models"""
+        """Initialize all critic agents with their specialized models."""
         return {
             CriticType.PRIMARY: TheaterCritic(
                 "Eleanor Hartwell",
@@ -299,7 +338,7 @@ class CriticEnsemble:
         }
 
     def select_rotating_critics(self, count: int = 3) -> List[TheaterCritic]:
-        """Select random subset of secondary critics for this review"""
+        """Select random subset of secondary critics for this review."""
         secondary_critics = [
             critic
             for critic_type, critic in self.critics.items()
@@ -307,36 +346,40 @@ class CriticEnsemble:
         ]
         return random.sample(secondary_critics, min(count, len(secondary_critics)))
 
+    @log_performance
     async def review_scene(
         self, scene: SceneData, num_rotating_critics: int = 3
     ) -> List[CriticReview]:
-        """Get reviews from primary critic and rotating ensemble"""
-        print(f"🎭 Analyzing scene: {scene.title} from {scene.musical}")
-        print(f"📝 Primary critic: {self.primary_critic.name}")
+        """Get reviews from primary critic and rotating ensemble."""
+        logger = get_logger()
+        logger.info(f"Starting ensemble analysis for scene: {scene.title} from {scene.musical}")
+        logger.info(f"Primary critic: {self.primary_critic.name}")
 
         # Always include primary critic
         reviews = []
 
         # Get rotating critics
         rotating_critics = self.select_rotating_critics(num_rotating_critics)
-        print(f"🔄 Rotating critics: {', '.join(c.name for c in rotating_critics)}")
+        critic_names = [c.name for c in rotating_critics]
+        logger.info(f"Selected rotating critics: {', '.join(critic_names)}")
 
         # Run all analyses concurrently
         all_critics = [self.primary_critic] + rotating_critics
         tasks = [critic.analyze_scene(scene) for critic in all_critics]
 
-        print("⏳ Running critic analyses...")
+        logger.info("Starting concurrent critic analyses...")
         reviews = await asyncio.gather(*tasks)
-
+        
+        logger.info(f"Completed ensemble analysis with {len(reviews)} reviews")
         return reviews
 
 
 class ConsensusAnalyzer:
-    """Analyzes consensus and disagreements between critics"""
+    """Analyzes consensus and disagreements between critics."""
 
     @staticmethod
     def calculate_consensus(reviews: List[CriticReview]) -> Dict:
-        """Calculate consensus scores and identify agreements/disagreements"""
+        """Calculate consensus scores and identify agreements/disagreements."""
         if not reviews:
             return {}
 
@@ -390,7 +433,7 @@ class ConsensusAnalyzer:
 
 
 def print_review_summary(reviews: List[CriticReview], consensus: Dict):
-    """Print formatted review summary"""
+    """Print formatted review summary."""
     print("\n" + "=" * 80)
     print("🎭 THEATER CRITICS ENSEMBLE REVIEW")
     print("=" * 80)
@@ -417,7 +460,7 @@ def print_review_summary(reviews: List[CriticReview], consensus: Dict):
         print("-" * 40)
 
     # Detailed scores
-    print(f"\n📈 DETAILED CONSENSUS SCORES")
+    print("\n📈 DETAILED CONSENSUS SCORES")
     print("-" * 40)
     for category, score in consensus["average_scores"].items():
         variation = consensus["score_variations"][category]
@@ -426,15 +469,19 @@ def print_review_summary(reviews: List[CriticReview], consensus: Dict):
         )
 
 
-if __name__ == "__main__":
-    # Example usage
-    async def main():
-        # Create sample scene
-        scene = SceneData(
-            title="Defying Gravity",
-            musical="Wicked",
-            description="Elphaba's climactic moment of self-realization and defiance at the end of Act I",
-            lyrics="""Something has changed within me
+async def main():
+    """Example usage of the theater critics system."""
+    # Setup logging
+    setup_logging(level="INFO", log_file="theater_critics.log")
+    logger = get_logger()
+    logger.info("Starting Theater Critics System")
+    
+    # Create sample scene
+    scene = SceneData(
+        title="Defying Gravity",
+        musical="Wicked",
+        description="Elphaba's climactic moment of self-realization and defiance at the end of Act I",
+        lyrics="""Something has changed within me
 Something is not the same
 I'm through with playing by the rules
 Of someone else's game
@@ -443,21 +490,24 @@ Too late for second-guessing
 Too late to go back to sleep
 It's time to trust my instincts
 Close my eyes and leap!""",
-            stage_directions="Elphaba rises above the stage on a mechanical lift, cape billowing, as the ensemble looks up in awe and fear",
-            character_notes="Elphaba transforms from outcast to empowered individual, accepting her differences as strengths",
-        )
+        stage_directions="Elphaba rises above the stage on a mechanical lift, cape billowing, as the ensemble looks up in awe and fear",
+        character_notes="Elphaba transforms from outcast to empowered individual, accepting her differences as strengths",
+    )
 
-        # Initialize critic ensemble
-        ensemble = CriticEnsemble()
+    # Initialize critic ensemble
+    ensemble = CriticEnsemble()
 
-        # Get reviews
-        reviews = await ensemble.review_scene(scene)
+    # Get reviews
+    reviews = await ensemble.review_scene(scene)
 
-        # Calculate consensus
-        consensus = ConsensusAnalyzer.calculate_consensus(reviews)
+    # Calculate consensus
+    consensus = ConsensusAnalyzer.calculate_consensus(reviews)
 
-        # Print results
-        print_review_summary(reviews, consensus)
+    # Print results
+    print_review_summary(reviews, consensus)
+    
+    logger.info("Theater Critics System analysis complete")
 
-    # Run the example
+
+if __name__ == "__main__":
     asyncio.run(main())
