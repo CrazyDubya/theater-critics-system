@@ -33,7 +33,7 @@ class SimpleCache:
             "critic": critic_name,
         }
         content = json.dumps(cache_data, sort_keys=True)
-        return hashlib.md5(content.encode()).hexdigest()
+        return hashlib.blake2b(content.encode(), digest_size=16).hexdigest()
 
     def _get_cache_path(self, cache_key: str) -> Path:
         """Get file path for cache key."""
